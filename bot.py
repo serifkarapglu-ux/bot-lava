@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from datetime import datetime
 
-API_TOKEN = "TOKENİNİ_BURAYA_YAZ"
+API_TOKEN = "8710890374:AAE7I4sQfeiCLgf1Y9P3RdL_rn5PgpHEcEo"
 
 logging.basicConfig(level=logging.INFO)
 
