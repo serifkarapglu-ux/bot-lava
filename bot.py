@@ -1,133 +1,146 @@
-import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+import sqlite3
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
+from datetime import datetime
 
-# LOG
+API_TOKEN = "TOKENİNİ_BURAYA_YAZ"
+
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-# Basit hafıza (db yerine)
-users = {}
+# DB bağlantı
+conn = sqlite3.connect("bot.db")
+cursor = conn.cursor()
 
-REQUIRED_CHANNELS = ["sadecebenchat", "dostlarhanesitr"]
+# TABLOLAR
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    balance INTEGER DEFAULT 0,
+    referrer INTEGER,
+    last_daily TEXT
+)
+""")
 
-# ─── Yardımcılar ───
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    link TEXT,
+    reward INTEGER
+)
+""")
 
-def get_user(user_id):
-    if user_id not in users:
-        users[user_id] = {
-            "balance": 0,
-            "invites": 0,
-            "rewarded": []
-        }
-    return users[user_id]
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS withdrawals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount INTEGER,
+    status TEXT
+)
+""")
 
-async def check_channels(bot, user_id):
-    results = {}
-    for ch in REQUIRED_CHANNELS:
-        try:
-            member = await bot.get_chat_member(f"@{ch}", user_id)
-            results[ch] = member.status not in ("left", "kicked")
-        except:
-            results[ch] = False
-    return results
+conn.commit()
 
-# ─── Menü ───
+# KULLANICI EKLE
+def add_user(user_id, ref=None):
+    cursor.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    if cursor.fetchone() is None:
+        cursor.execute("INSERT INTO users (user_id, referrer) VALUES (?, ?)", (user_id, ref))
+        conn.commit()
 
-def menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Bakiye", callback_data="bakiye")],
-        [InlineKeyboardButton("🎁 Davet", callback_data="davet")],
-        [InlineKeyboardButton("✅ Ödül Al", callback_data="odul")]
-    ])
+# BAKİYE AL
+def get_balance(user_id):
+    cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+    return cursor.fetchone()[0]
 
-# ─── Komutlar ───
+# BAKİYE EKLE
+def add_balance(user_id, amount):
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, user_id))
+    conn.commit()
 
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    u = get_user(user.id)
+# /start
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
+    ref = message.get_args()
+    add_user(message.from_user.id, ref)
+    await message.answer("👋 Hoş geldin!\n\n💰 Para kazanmak için görev yap!")
 
-    # davet sistemi
-    if ctx.args:
-        if ctx.args[0].startswith("ref_"):
-            ref_id = int(ctx.args[0].split("_")[1])
-            if ref_id != user.id:
-                get_user(ref_id)["balance"] += 10
+# BAKİYE
+@dp.message_handler(commands=['bakiye'])
+async def balance(message: types.Message):
+    bal = get_balance(message.from_user.id)
+    await message.answer(f"💰 Bakiyen: {bal}₺")
 
-    await update.message.reply_text(
-        f"Hoşgeldin {user.first_name}!\nBakiyen: {u['balance']} TL",
-        reply_markup=menu()
-    )
+# GÜNLÜK ÖDÜL
+@dp.message_handler(commands=['gunluk'])
+async def daily(message: types.Message):
+    user_id = message.from_user.id
+    today = datetime.now().date()
 
-async def bakiye(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    u = get_user(user.id)
+    cursor.execute("SELECT last_daily FROM users WHERE user_id=?", (user_id,))
+    last = cursor.fetchone()[0]
 
-    await update.message.reply_text(
-        f"💰 Bakiyen: {u['balance']} TL\n🎁 Davet: {u['invites']}",
-        reply_markup=menu()
-    )
+    if last == str(today):
+        await message.answer("❌ Bugün zaten aldın")
+        return
 
-async def davet(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    bot_username = (await ctx.bot.get_me()).username
+    add_balance(user_id, 5)
+    cursor.execute("UPDATE users SET last_daily=? WHERE user_id=?", (str(today), user_id))
+    conn.commit()
 
-    link = f"https://t.me/{bot_username}?start=ref_{user.id}"
+    await message.answer("🎁 Günlük 5₺ kazandın!")
 
-    await update.message.reply_text(
-        f"Davet linkin:\n{link}\n\nHer davet +10 TL"
-    )
+# GÖREVLER
+@dp.message_handler(commands=['gorevler'])
+async def tasks(message: types.Message):
+    cursor.execute("SELECT * FROM tasks")
+    tasks = cursor.fetchall()
 
-async def odul(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    u = get_user(user.id)
+    text = "🎯 Görevler:\n\n"
+    for t in tasks:
+        text += f"{t[0]}. {t[1]} → {t[2]}₺\n"
 
-    results = await check_channels(ctx.bot, user.id)
+    await message.answer(text)
 
-    text = ""
-    earned = 0
+# GÖREV EKLE (ADMIN)
+ADMIN_ID = 123456789
 
-    for ch, ok in results.items():
-        if ok:
-            if ch not in u["rewarded"]:
-                u["balance"] += 5
-                u["rewarded"].append(ch)
-                earned += 5
-                text += f"✅ {ch} +5 TL\n"
-            else:
-                text += f"ℹ️ {ch} zaten alındı\n"
-        else:
-            text += f"❌ @{ch} katıl\n"
+@dp.message_handler(commands=['addtask'])
+async def add_task(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    args = message.get_args().split()
+    link = args[0]
+    reward = int(args[1])
 
-    if earned > 0:
-        text += f"\nToplam +{earned} TL kazandın"
+    cursor.execute("INSERT INTO tasks (link, reward) VALUES (?, ?)", (link, reward))
+    conn.commit()
 
-    await update.message.reply_text(text, reply_markup=menu())
+    await message.answer("✅ Görev eklendi")
 
-# ─── Butonlar ───
+# ÇEKİM
+@dp.message_handler(commands=['cekim'])
+async def withdraw(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        amount = int(message.get_args())
+    except:
+        await message.answer("❌ Doğru kullanım: /cekim 50")
+        return
 
-async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    if get_balance(user_id) < amount:
+        await message.answer("❌ Yetersiz bakiye")
+        return
 
-    if query.data == "bakiye":
-        await bakiye(update, ctx)
+    cursor.execute("INSERT INTO withdrawals (user_id, amount, status) VALUES (?, ?, ?)", (user_id, amount, "pending"))
+    conn.commit()
 
-    elif query.data == "davet":
-        await davet(update, ctx)
+    await message.answer("💸 Çekim talebi alındı")
 
-    elif query.data == "odul":
-        await odul(update, ctx)
-
-# ─── MAIN ───
-
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(button))
-
-print("Bot çalışıyor...")
-
-app.run_polling()
+# BOT BAŞLAT
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
