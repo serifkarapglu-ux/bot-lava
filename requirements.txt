@@ -1,7 +1,8 @@
-python-telegram-bot>=21.0
-Pillow>=10.0
-requests>=2.31
-aiohttp>=3.9
-aiosqlite>=0.19
-opencv-python-headless>=4.8
-numpy>=1.24
+aiogram==3.0.0b7
+aiohttp
+aiosqlite
+python-telegram-bot
+requests
+opencv-python-headless
+numpy
+Pillow
