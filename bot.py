@@ -1,21 +1,27 @@
 import logging
 import sqlite3
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from datetime import datetime
 
-API_TOKEN = "8710890374:AAE7I4sQfeiCLgf1Y9P3RdL_rn5PgpHEcEo"
-
+# Logging aktif
 logging.basicConfig(level=logging.INFO)
 
+# Bot token - Environment Variable üzerinden alıyoruz (güvenli)
+API_TOKEN = os.getenv("TOKEN")
+if not API_TOKEN:
+    raise Exception("⚠️ TOKEN environment variable bulunamadı!")
+
+# Bot ve Dispatcher oluştur
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-# DB bağlantı
+# SQLite bağlantısı
 conn = sqlite3.connect("bot.db")
 cursor = conn.cursor()
 
-# TABLOLAR
+# Kullanıcı tablosu
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -25,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
+# Görev tablosu
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS tasks (
     task_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +40,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 )
 """)
 
+# Çekim tablosu
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS withdrawals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
